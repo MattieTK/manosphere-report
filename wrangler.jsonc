@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "manosphere-report",
+  "account_id": "240e340132a0949a7f970e9c2d0e1758",
   "compatibility_date": "2026-02-13",
   "compatibility_flags": ["nodejs_compat"],
   "main": "./src/server.ts",
@@ -11,7 +12,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "manosphere-report-db"
+      "database_name": "manosphere-report-db",
+      "database_id": "f177cb26-15b6-4d5a-abeb-a3e9e617d2dc"
     }
   ],
 
