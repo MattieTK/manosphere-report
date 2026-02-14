@@ -138,7 +138,7 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
           return {
             index: i,
             text: whisperResult.text || '',
-            words: (whisperResult as any).words || [],
+            words: (whisperResult.segments || []).flatMap(seg => seg.words || []),
             duration: (whisperResult as any).transcription_info?.duration || 0,
           }
         },
@@ -168,6 +168,10 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
     // Merge all transcriptions
     const allWords = transcriptions.flatMap((t) => t.words)
     const fullText = transcriptions.map((t) => t.text).join(' ')
+
+    if (allWords.length === 0 && fullText.trim().length > 0) {
+      console.warn(`Whisper returned text but no word-level timing data for episode ${episodeId}`)
+    }
 
     if (!fullText.trim()) {
       throw new Error('Transcription returned empty result')
@@ -233,6 +237,8 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
               { role: 'system', content: ANALYSIS_SYSTEM_PROMPT },
               { role: 'user', content: prompt },
             ],
+            max_completion_tokens: 4096,
+            response_format: { type: 'json_object' },
           },
         )) as any
 

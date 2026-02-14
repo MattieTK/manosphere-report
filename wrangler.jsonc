@@ -1,46 +1,48 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "manosphere-report",
-  "account_id": "240e340132a0949a7f970e9c2d0e1758",
-  "compatibility_date": "2026-02-13",
-  "compatibility_flags": ["nodejs_compat"],
-  "main": "./src/server.ts",
-  "observability": {
-    "enabled": true
-  },
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "manosphere-report",
+	"account_id": "240e340132a0949a7f970e9c2d0e1758",
+	"compatibility_date": "2026-02-13",
+	"compatibility_flags": ["nodejs_compat"],
+	"main": "./src/server.ts",
+	"observability": {
+		"enabled": true,
+	},
 
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "manosphere-report-db",
-      "database_id": "f177cb26-15b6-4d5a-abeb-a3e9e617d2dc"
-    }
-  ],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "manosphere-report-db",
+			"database_id": "f177cb26-15b6-4d5a-abeb-a3e9e617d2dc",
+			"remote": true,
+		},
+	],
 
-  "r2_buckets": [
-    {
-      "binding": "AUDIO_BUCKET",
-      "bucket_name": "manosphere-audio"
-    }
-  ],
+	"r2_buckets": [
+		{
+			"binding": "AUDIO_BUCKET",
+			"bucket_name": "manosphere-audio",
+			"remote": true,
+		},
+	],
 
-  "ai": {
-    "binding": "AI"
-  },
+	"ai": {
+		"binding": "AI",
+	},
 
-  "workflows": [
-    {
-      "name": "episode-processing",
-      "binding": "EPISODE_WORKFLOW",
-      "class_name": "EpisodeProcessingWorkflow"
-    }
-  ],
+	"workflows": [
+		{
+			"name": "episode-processing",
+			"binding": "EPISODE_WORKFLOW",
+			"class_name": "EpisodeProcessingWorkflow",
+		},
+	],
 
-  "triggers": {
-    "crons": ["0 */6 * * *"]
-  },
+	"triggers": {
+		"crons": ["0 */6 * * *"],
+	},
 
-  "vars": {
-    "IS_DEMO": "false"
-  }
+	"vars": {
+		"IS_DEMO": "false",
+	},
 }

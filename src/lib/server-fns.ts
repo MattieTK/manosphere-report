@@ -438,28 +438,32 @@ export const generateWeeklyAnalysis = createServerFn({
       }
     }
 
-    // Get all completed episode analyses from the past week
-    const recentAnalyses = await db
+    // Get the latest completed episode (with analysis) from each podcast
+    const allCompleted = await db
       .select({
         episodeId: episodes.id,
         episodeTitle: episodes.title,
         podcastId: episodes.podcastId,
+        publishedAt: episodes.publishedAt,
         summary: episodeAnalyses.summary,
         tags: episodeAnalyses.tags,
         themes: episodeAnalyses.themes,
       })
       .from(episodeAnalyses)
       .innerJoin(episodes, eq(episodes.id, episodeAnalyses.episodeId))
-      .where(
-        and(
-          gte(episodes.publishedAt, weekStart),
-          lte(episodes.publishedAt, weekEnd),
-          eq(episodes.status, 'complete'),
-        ),
-      )
+      .where(eq(episodes.status, 'complete'))
+      .orderBy(desc(episodes.publishedAt))
+
+    // Take the most recent episode per podcast
+    const seen = new Set<string>()
+    const recentAnalyses = allCompleted.filter((row) => {
+      if (seen.has(row.podcastId)) return false
+      seen.add(row.podcastId)
+      return true
+    })
 
     if (recentAnalyses.length === 0) {
-      throw new Error('No completed episodes in the past week to analyze')
+      throw new Error('No completed episodes with analyses found')
     }
 
     // Get podcast titles
@@ -484,6 +488,7 @@ export const generateWeeklyAnalysis = createServerFn({
         { role: 'system', content: WEEKLY_ANALYSIS_SYSTEM_PROMPT },
         { role: 'user', content: prompt },
       ],
+      max_completion_tokens: 4096,
     })) as any
 
     // Handle GLM response format

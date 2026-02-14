@@ -1,12 +1,12 @@
 const ANALYSIS_SYSTEM_PROMPT = `You are an expert media analyst specializing in podcast content analysis.
 Analyze the following podcast transcript and return a JSON object with exactly these fields:
-- "summary": A 2-3 paragraph summary of the episode's main points and arguments
-- "tags": An array of 5-15 topic tags as strings (e.g., ["dating", "masculinity", "self-improvement"])
+- "summary": A markdown-formatted summary of the episode's main points and arguments. Use short paragraphs separated by blank lines. Use **bold** for key names and concepts. Aim for 3-5 paragraphs.
+- "tags": An array of 5-15 lowercase topic tags as strings (e.g., ["dating", "masculinity", "self-improvement"])
 - "themes": An array of objects with "theme" and "description" fields identifying major themes discussed
 - "sentiment": A brief overall tone assessment (e.g., "confrontational", "educational", "motivational", "conversational")
 - "keyQuotes": An array of 3-5 notable direct quotes from the transcript
 
-Return ONLY valid JSON. No markdown formatting, no code fences, no explanation outside the JSON.`
+Return ONLY valid JSON. No markdown code fences, no explanation outside the JSON.`
 
 const WEEKLY_ANALYSIS_SYSTEM_PROMPT = `You are an expert media analyst who studies podcast ecosystems.
 Given summaries and analyses of podcast episodes from the past week, produce a comprehensive trend analysis.
@@ -45,32 +45,43 @@ export function buildAnalysisPrompt(transcript: string): string {
 }
 
 export function parseAnalysisResult(response: string): AnalysisResult {
-  // Try to extract JSON from the response
-  let jsonStr = response.trim()
+  const extract = (parsed: any): AnalysisResult => ({
+    summary: parsed.summary || '',
+    tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+    themes: Array.isArray(parsed.themes) ? parsed.themes : [],
+    sentiment: parsed.sentiment || '',
+    keyQuotes: Array.isArray(parsed.keyQuotes) ? parsed.keyQuotes : [],
+  })
 
-  // Remove potential markdown code fences
-  if (jsonStr.startsWith('```')) {
-    jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+  // Strategy 1: Direct parse (model returned clean JSON)
+  try {
+    return extract(JSON.parse(response.trim()))
+  } catch {}
+
+  // Strategy 2: Strip markdown code fences
+  const fenceMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+  if (fenceMatch) {
+    try {
+      return extract(JSON.parse(fenceMatch[1]))
+    } catch {}
   }
 
-  try {
-    const parsed = JSON.parse(jsonStr)
-    return {
-      summary: parsed.summary || '',
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-      themes: Array.isArray(parsed.themes) ? parsed.themes : [],
-      sentiment: parsed.sentiment || '',
-      keyQuotes: Array.isArray(parsed.keyQuotes) ? parsed.keyQuotes : [],
-    }
-  } catch {
-    // Fallback: extract what we can
-    return {
-      summary: response.slice(0, 2000),
-      tags: [],
-      themes: [],
-      sentiment: 'unknown',
-      keyQuotes: [],
-    }
+  // Strategy 3: Find the first { ... } block in the response
+  const braceStart = response.indexOf('{')
+  const braceEnd = response.lastIndexOf('}')
+  if (braceStart !== -1 && braceEnd > braceStart) {
+    try {
+      return extract(JSON.parse(response.slice(braceStart, braceEnd + 1)))
+    } catch {}
+  }
+
+  // Fallback: nothing parsed – store the raw text as summary
+  return {
+    summary: response.slice(0, 4000),
+    tags: [],
+    themes: [],
+    sentiment: 'unknown',
+    keyQuotes: [],
   }
 }
 

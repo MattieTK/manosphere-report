@@ -48,25 +48,25 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b bg-white dark:bg-gray-900 sticky top-0 z-10">
+      <header className="border-b border-b-gray-200 dark:border-b-gray-800 bg-white dark:bg-gray-900 sticky top-0 z-10">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <Link to="/" className="text-xl font-bold tracking-tight">
+            <Link to="/" className="font-heading text-xl tracking-tight">
               The Manosphere Report
             </Link>
             <div className="flex gap-6 text-sm font-medium">
               <Link
                 to="/"
-                activeProps={{ className: 'text-blue-600 dark:text-blue-400' }}
+                activeProps={{ className: 'text-ink-600 dark:text-ink-300' }}
                 activeOptions={{ exact: true }}
-                className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                className="hover:text-ink-500 dark:hover:text-ink-300 transition-colors"
               >
                 Home
               </Link>
               <Link
                 to="/admin"
-                activeProps={{ className: 'text-blue-600 dark:text-blue-400' }}
-                className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                activeProps={{ className: 'text-ink-600 dark:text-ink-300' }}
+                className="hover:text-ink-500 dark:hover:text-ink-300 transition-colors"
               >
                 Admin
               </Link>
@@ -77,7 +77,7 @@ function RootComponent() {
       <main className="flex-1">
         <Outlet />
       </main>
-      <footer className="border-t py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+      <footer className="border-t py-6 text-center text-xs font-mono text-gray-400 dark:text-gray-500 tracking-wide">
         The Manosphere Report &mdash; AI-powered podcast tracking and analysis
       </footer>
     </div>

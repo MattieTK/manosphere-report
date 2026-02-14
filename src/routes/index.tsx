@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { getHomepageData, generateWeeklyAnalysis } from '~/lib/server-fns'
 import { useState } from 'react'
+import Markdown from 'react-markdown'
 
 export const Route = createFileRoute('/')({
   loader: () => getHomepageData(),
@@ -26,9 +27,9 @@ function HomePage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-        <p className="text-gray-600 dark:text-gray-400">
+      <div className="mb-10">
+        <h1 className="font-heading text-4xl mb-2">Dashboard</h1>
+        <p className="text-gray-500 dark:text-gray-400">
           Tracking {podcasts.length} podcast{podcasts.length !== 1 ? 's' : ''} across
           the manosphere ecosystem.
         </p>
@@ -36,22 +37,28 @@ function HomePage() {
 
       {/* Podcast Grid */}
       <section className="mb-12">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Tracked Podcasts</h2>
+        <div className="flex items-center gap-3 mb-5">
+          <span className="font-mono text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">
+            Tracked Podcasts
+          </span>
+          <span className="inline-flex items-center justify-center min-w-[1.5rem] h-5 rounded-full bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200 text-xs font-mono font-medium px-1.5">
+            {podcasts.length}
+          </span>
+          <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
           <Link
             to="/admin"
-            className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            className="text-xs font-mono uppercase tracking-wider text-ink-500 dark:text-ink-300 hover:text-ink-700 dark:hover:text-ink-200 transition-colors"
           >
-            Manage Podcasts
+            Manage
           </Link>
         </div>
 
         {podcasts.length === 0 ? (
-          <div className="border rounded-lg p-8 text-center text-gray-500 dark:text-gray-400">
+          <div className="podcast-card p-8 text-center text-gray-500 dark:text-gray-400">
             <p className="mb-4">No podcasts are being tracked yet.</p>
             <Link
               to="/admin"
-              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+              className="btn btn-primary"
             >
               Add Your First Podcast
             </Link>
@@ -63,7 +70,7 @@ function HomePage() {
                 key={podcast.id}
                 to="/podcasts/$podcastId"
                 params={{ podcastId: podcast.id }}
-                className="border rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors bg-white dark:bg-gray-900"
+                className="podcast-card p-4 block"
               >
                 <div className="flex gap-3">
                   {podcast.imageUrl && (
@@ -74,8 +81,8 @@ function HomePage() {
                     />
                   )}
                   <div className="min-w-0">
-                    <h3 className="font-semibold truncate">{podcast.title}</h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    <h3 className="font-heading text-lg truncate">{podcast.title}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 font-mono text-xs">
                       {podcast.episodeCount} episode
                       {podcast.episodeCount !== 1 ? 's' : ''}
                     </p>
@@ -94,20 +101,23 @@ function HomePage() {
 
       {/* Weekly Trend Analysis */}
       <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Weekly Trend Analysis</h2>
+        <div className="flex items-center gap-3 mb-5">
+          <span className="font-mono text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">
+            Weekly Trend Analysis
+          </span>
+          <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
           <button
             onClick={handleGenerateAnalysis}
             disabled={generatingAnalysis}
-            className="text-sm font-medium px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn btn-sm btn-secondary"
           >
-            {generatingAnalysis ? 'Generating...' : 'Generate New Analysis'}
+            {generatingAnalysis ? 'Generating\u2026' : 'Generate New'}
           </button>
         </div>
 
         {weeklyAnalysis ? (
-          <div className="border rounded-lg p-6 bg-white dark:bg-gray-900">
-            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-4">
+          <div className="podcast-card p-6">
+            <div className="flex items-center gap-2 text-xs font-mono text-gray-500 dark:text-gray-400 mb-4">
               <span>
                 {new Date(weeklyAnalysis.weekStart).toLocaleDateString()} &ndash;{' '}
                 {new Date(weeklyAnalysis.weekEnd).toLocaleDateString()}
@@ -116,16 +126,13 @@ function HomePage() {
 
             {/* Trending Topics */}
             {weeklyAnalysis.trendingTopics && (
-              <div className="mb-4">
-                <h3 className="text-sm font-medium mb-2">Trending Topics</h3>
+              <div className="mb-5">
+                <p className="sidebar-label">Trending Topics</p>
                 <div className="flex flex-wrap gap-2">
                   {(
                     JSON.parse(weeklyAnalysis.trendingTopics) as string[]
                   ).map((topic: string, i: number) => (
-                    <span
-                      key={i}
-                      className="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs rounded-full"
-                    >
+                    <span key={i} className="topic-tag">
                       {topic}
                     </span>
                   ))}
@@ -135,15 +142,13 @@ function HomePage() {
 
             {/* Analysis Text */}
             <div className="prose dark:prose-invert max-w-none text-sm">
-              {weeklyAnalysis.analysis.split('\n').map((paragraph, i) => (
-                <p key={i}>{paragraph}</p>
-              ))}
+              <Markdown>{weeklyAnalysis.analysis}</Markdown>
             </div>
           </div>
         ) : (
-          <div className="border rounded-lg p-8 text-center text-gray-500 dark:text-gray-400">
+          <div className="podcast-card p-8 text-center text-gray-500 dark:text-gray-400">
             <p>
-              No weekly analysis available yet. Click "Generate New Analysis" to
+              No weekly analysis available yet. Click "Generate New" to
               create one from the past week's episodes.
             </p>
           </div>
