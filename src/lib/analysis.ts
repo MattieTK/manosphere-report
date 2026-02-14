@@ -33,9 +33,9 @@ export interface AnalysisResult {
 }
 
 export function buildAnalysisPrompt(transcript: string): string {
-  // Truncate very long transcripts - use conservative limit
-  // (~50k chars = ~12k tokens to leave room for response)
-  const maxChars = 50000
+  // GLM-4.7-Flash has a 131k token context window (~4 chars per token).
+  // Reserve ~30k tokens for system prompt + response, use the rest for transcript.
+  const maxChars = 400000
   const truncated =
     transcript.length > maxChars
       ? transcript.slice(0, maxChars) + '\n\n[TRANSCRIPT TRUNCATED]'
