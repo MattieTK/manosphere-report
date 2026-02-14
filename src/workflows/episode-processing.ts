@@ -219,11 +219,14 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
           },
         )) as any
 
-        // Handle different response formats from Workers AI
-        const responseText = result.response || result.content || result.text || ''
+        // GLM response format: choices[0].message.content
+        const responseText =
+          result?.choices?.[0]?.message?.content ||
+          result?.response ||
+          ''
 
         if (!responseText) {
-          throw new Error(`Empty response from GLM model. Result keys: ${Object.keys(result).join(', ')}`)
+          throw new Error(`Empty response from GLM model. Result: ${JSON.stringify(result).slice(0, 500)}`)
         }
 
         return parseAnalysisResult(responseText)
