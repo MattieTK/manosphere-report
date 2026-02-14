@@ -7,6 +7,7 @@ import {
   removePodcast,
   triggerPoll,
   processEpisode,
+  resetEpisode,
   importPastEpisodes,
   generateWeeklyAnalysis,
   cancelAllJobs,
@@ -99,6 +100,17 @@ function AdminPage() {
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to trigger processing',
+      )
+    }
+  }
+
+  const handleResetEpisode = async (episodeId: string) => {
+    try {
+      await resetEpisode({ data: { episodeId } })
+      router.invalidate()
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to reset episode',
       )
     }
   }
@@ -348,7 +360,7 @@ function AdminPage() {
                                 {episode.status}
                               </span>
                             </td>
-                            <td className="px-3 py-2 text-center">
+                            <td className="px-3 py-2 text-center space-x-2">
                               {(episode.status === 'pending' ||
                                 episode.status === 'error') && (
                                 <button
@@ -362,6 +374,14 @@ function AdminPage() {
                                   className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
                                 >
                                   Process
+                                </button>
+                              )}
+                              {episode.status === 'complete' && (
+                                <button
+                                  onClick={() => handleResetEpisode(episode.id)}
+                                  className="text-xs text-gray-500 dark:text-gray-400 hover:underline"
+                                >
+                                  Reset
                                 </button>
                               )}
                             </td>

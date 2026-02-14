@@ -249,6 +249,30 @@ export const cancelAllJobs = createServerFn({ method: 'POST' }).handler(
   },
 )
 
+export const resetEpisode = createServerFn({ method: 'POST' })
+  .inputValidator((input: { episodeId: string }) => input)
+  .handler(async ({ data }) => {
+    const db = getDb(env.DB)
+
+    // Delete existing transcript segments
+    await db
+      .delete(transcriptSegments)
+      .where(eq(transcriptSegments.episodeId, data.episodeId))
+
+    // Delete existing analysis
+    await db
+      .delete(episodeAnalyses)
+      .where(eq(episodeAnalyses.episodeId, data.episodeId))
+
+    // Reset episode status
+    await db
+      .update(episodes)
+      .set({ status: 'pending', workflowId: null, errorMessage: null })
+      .where(eq(episodes.id, data.episodeId))
+
+    return { success: true }
+  })
+
 export const processEpisode = createServerFn({ method: 'POST' })
   .inputValidator(
     (input: { episodeId: string; podcastId: string; audioUrl: string }) =>
