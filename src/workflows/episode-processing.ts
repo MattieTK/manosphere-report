@@ -90,11 +90,9 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
     const CHUNK_SIZE = 10 * 1024 * 1024
     const numChunks = Math.ceil(audioMeta.size / CHUNK_SIZE)
 
-    const transcriptions: Array<{ text: string; words: Word[]; duration: number }> = []
-    let cumulativeOffset = 0
-
-    for (let i = 0; i < numChunks; i++) {
-      const chunkResult = await step.do(
+    // Transcribe all chunks in parallel
+    const chunkPromises = Array.from({ length: numChunks }, (_, i) =>
+      step.do(
         `transcribe-chunk-${i}`,
         {
           retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' },
@@ -126,26 +124,36 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
           )
 
           return {
+            index: i,
             text: whisperResult.text || '',
             words: (whisperResult as any).words || [],
             duration: (whisperResult as any).transcription_info?.duration || 0,
           }
         },
-      )
+      ),
+    )
 
-      // Offset word timestamps by cumulative duration
-      const offsetWords: Word[] = chunkResult.words.map((w: any) => ({
+    const chunkResults = await Promise.all(chunkPromises)
+
+    // Sort by index and compute cumulative offsets
+    chunkResults.sort((a, b) => a.index - b.index)
+
+    const transcriptions: Array<{ text: string; words: Word[]; duration: number }> = []
+    let cumulativeOffset = 0
+
+    for (const chunk of chunkResults) {
+      const offsetWords: Word[] = chunk.words.map((w: any) => ({
         word: w.word,
         start: w.start + cumulativeOffset,
         end: w.end + cumulativeOffset,
       }))
 
       transcriptions.push({
-        text: chunkResult.text,
+        text: chunk.text,
         words: offsetWords,
-        duration: chunkResult.duration,
+        duration: chunk.duration,
       })
-      cumulativeOffset += chunkResult.duration
+      cumulativeOffset += chunk.duration
     }
 
     // Merge all transcriptions
