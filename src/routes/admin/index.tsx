@@ -434,7 +434,11 @@ function AdminPage() {
                                   Process
                                 </button>
                               )}
-                              {episode.status === 'complete' && (
+                              {(episode.status === 'complete' ||
+                                episode.status === 'error' ||
+                                episode.status === 'downloading' ||
+                                episode.status === 'transcribing' ||
+                                episode.status === 'analyzing') && (
                                 <button
                                   onClick={() => handleResetEpisode(episode.id)}
                                   className="text-xs text-gray-500 dark:text-gray-400 hover:underline"
