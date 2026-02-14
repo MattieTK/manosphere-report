@@ -19,6 +19,51 @@ interface FeedMeta {
   items: FeedItem[]
 }
 
+/**
+ * Resolves a URL that may be an Apple Podcasts link into an RSS feed URL.
+ * Accepts:
+ *   - https://podcasts.apple.com/us/podcast/some-name/id1234567890
+ *   - https://podcasts.apple.com/podcast/id1234567890
+ *   - https://itunes.apple.com/...id1234567890...
+ *   - Direct RSS feed URLs (returned as-is)
+ */
+export async function resolveToFeedUrl(input: string): Promise<string> {
+  const trimmed = input.trim()
+
+  // Extract Apple Podcasts / iTunes ID from URL
+  const appleMatch = trimmed.match(
+    /(?:podcasts\.apple\.com|itunes\.apple\.com)\/.*?(?:\/id|[?&]id=)(\d+)/,
+  )
+
+  if (!appleMatch) {
+    // Not an Apple URL — assume it's already an RSS feed URL
+    return trimmed
+  }
+
+  const itunesId = appleMatch[1]
+  const lookupUrl = `https://itunes.apple.com/lookup?id=${itunesId}&entity=podcast`
+
+  const response = await fetch(lookupUrl)
+  if (!response.ok) {
+    throw new Error(
+      `Apple Podcasts lookup failed: ${response.status} ${response.statusText}`,
+    )
+  }
+
+  const data = (await response.json()) as {
+    resultCount: number
+    results: Array<{ feedUrl?: string; collectionName?: string }>
+  }
+
+  if (data.resultCount === 0 || !data.results[0]?.feedUrl) {
+    throw new Error(
+      `No RSS feed found for Apple Podcasts ID ${itunesId}. The podcast may not have a public feed.`,
+    )
+  }
+
+  return data.results[0].feedUrl
+}
+
 export async function parseFeed(feedUrl: string): Promise<FeedMeta> {
   const response = await fetch(feedUrl)
   if (!response.ok) {

@@ -10,7 +10,7 @@ import {
   episodeAnalyses,
   weeklyAnalyses,
 } from '~/db/schema'
-import { parseFeed, pollAllFeeds } from '~/lib/rss'
+import { parseFeed, pollAllFeeds, resolveToFeedUrl } from '~/lib/rss'
 import {
   WEEKLY_ANALYSIS_SYSTEM_PROMPT,
   buildWeeklyAnalysisPrompt,
@@ -128,7 +128,9 @@ export const getEpisodeDetail = createServerFn({ method: 'GET' })
 export const addPodcast = createServerFn({ method: 'POST' })
   .inputValidator((input: { feedUrl: string }) => input)
   .handler(async ({ data }) => {
-    const feed = await parseFeed(data.feedUrl)
+    // Resolve Apple Podcasts / iTunes links to RSS feed URLs
+    const feedUrl = await resolveToFeedUrl(data.feedUrl)
+    const feed = await parseFeed(feedUrl)
 
     const db = getDb(env.DB)
     const id = nanoid()
@@ -136,7 +138,7 @@ export const addPodcast = createServerFn({ method: 'POST' })
     await db.insert(podcasts).values({
       id,
       title: feed.title,
-      feedUrl: data.feedUrl,
+      feedUrl,
       imageUrl: feed.imageUrl || null,
       description: feed.description || null,
       addedAt: new Date(),

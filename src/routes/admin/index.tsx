@@ -156,22 +156,27 @@ function AdminPage() {
       {/* Add Podcast Form */}
       <section className="mb-8">
         <h2 className="text-lg font-semibold mb-3">Add Podcast</h2>
-        <form onSubmit={handleAddPodcast} className="flex gap-3">
-          <input
-            type="url"
-            value={feedUrl}
-            onChange={(e) => setFeedUrl(e.target.value)}
-            placeholder="https://feeds.example.com/podcast.xml"
-            required
-            className="flex-1 px-3 py-2 border rounded-md bg-white dark:bg-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            type="submit"
-            disabled={adding}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
-          >
-            {adding ? 'Adding...' : 'Add Podcast'}
-          </button>
+        <form onSubmit={handleAddPodcast} className="space-y-2">
+          <div className="flex gap-3">
+            <input
+              type="url"
+              value={feedUrl}
+              onChange={(e) => setFeedUrl(e.target.value)}
+              placeholder="RSS feed URL or Apple Podcasts link"
+              required
+              className="flex-1 px-3 py-2 border rounded-md bg-white dark:bg-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              type="submit"
+              disabled={adding}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+            >
+              {adding ? 'Adding...' : 'Add Podcast'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Paste an RSS feed URL or an Apple Podcasts link (e.g. https://podcasts.apple.com/us/podcast/....). Apple links are automatically resolved to RSS feeds.
+          </p>
         </form>
       </section>
 
