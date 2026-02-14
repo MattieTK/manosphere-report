@@ -86,13 +86,21 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
       return { size: audioObj.size }
     })
 
-    // Process in 10MB chunks to stay within 128MB memory limit
-    const CHUNK_SIZE = 10 * 1024 * 1024
+    // Process in 5MB chunks sequentially to stay well within 128MB memory limit
+    // 5MB raw + ~7MB base64 + overhead = ~15-20MB per chunk
+    const CHUNK_SIZE = 5 * 1024 * 1024
     const numChunks = Math.ceil(audioMeta.size / CHUNK_SIZE)
 
-    // Transcribe all chunks in parallel
-    const chunkPromises = Array.from({ length: numChunks }, (_, i) =>
-      step.do(
+    const chunkResults: Array<{
+      index: number
+      text: string
+      words: any[]
+      duration: number
+    }> = []
+
+    // Process sequentially to avoid memory issues
+    for (let i = 0; i < numChunks; i++) {
+      const result = await step.do(
         `transcribe-chunk-${i}`,
         {
           retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' },
@@ -108,10 +116,14 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
           if (!audioObj) throw new Error(`Chunk ${i} not found in R2`)
 
           const audioBuffer = await audioObj.arrayBuffer()
+
+          // Convert to base64 more efficiently using Buffer-like approach
           const bytes = new Uint8Array(audioBuffer)
           let binary = ''
-          for (let j = 0; j < bytes.length; j++) {
-            binary += String.fromCharCode(bytes[j])
+          const chunkSize = 8192
+          for (let j = 0; j < bytes.length; j += chunkSize) {
+            const slice = bytes.subarray(j, Math.min(j + chunkSize, bytes.length))
+            binary += String.fromCharCode(...slice)
           }
           const base64 = btoa(binary)
 
@@ -130,13 +142,10 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
             duration: (whisperResult as any).transcription_info?.duration || 0,
           }
         },
-      ),
-    )
+      )
 
-    const chunkResults = await Promise.all(chunkPromises)
-
-    // Sort by index and compute cumulative offsets
-    chunkResults.sort((a, b) => a.index - b.index)
+      chunkResults.push(result)
+    }
 
     const transcriptions: Array<{ text: string; words: Word[]; duration: number }> = []
     let cumulativeOffset = 0
