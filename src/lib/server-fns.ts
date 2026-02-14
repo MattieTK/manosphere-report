@@ -408,79 +408,109 @@ export const getAdminData = createServerFn({ method: 'GET' }).handler(
 
 export const generateWeeklyAnalysis = createServerFn({
   method: 'POST',
-}).handler(async () => {
-  assertNotDemo()
-  const db = getDb(env.DB)
-  const weekEnd = new Date()
-  const weekStart = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000)
+})
+  .inputValidator((input?: { force?: boolean }) => input || {})
+  .handler(async ({ data }) => {
+    assertNotDemo()
+    const db = getDb(env.DB)
+    const now = new Date()
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const weekEnd = now
+    const weekStart = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000)
 
-  // Get all completed episode analyses from the past week
-  const recentAnalyses = await db
-    .select({
-      episodeId: episodes.id,
-      episodeTitle: episodes.title,
-      podcastId: episodes.podcastId,
-      summary: episodeAnalyses.summary,
-      tags: episodeAnalyses.tags,
-      themes: episodeAnalyses.themes,
+    // Check for existing analysis created within 24 hours (unless force refresh)
+    if (!data?.force) {
+      const [existing] = await db
+        .select()
+        .from(weeklyAnalyses)
+        .where(gte(weeklyAnalyses.createdAt, twentyFourHoursAgo))
+        .orderBy(desc(weeklyAnalyses.createdAt))
+        .limit(1)
+
+      if (existing) {
+        return {
+          id: existing.id,
+          analysis: existing.analysis,
+          trendingTopics: JSON.parse(existing.trendingTopics),
+          episodeCount: JSON.parse(existing.episodeIds).length,
+          cached: true,
+        }
+      }
+    }
+
+    // Get all completed episode analyses from the past week
+    const recentAnalyses = await db
+      .select({
+        episodeId: episodes.id,
+        episodeTitle: episodes.title,
+        podcastId: episodes.podcastId,
+        summary: episodeAnalyses.summary,
+        tags: episodeAnalyses.tags,
+        themes: episodeAnalyses.themes,
+      })
+      .from(episodeAnalyses)
+      .innerJoin(episodes, eq(episodes.id, episodeAnalyses.episodeId))
+      .where(
+        and(
+          gte(episodes.publishedAt, weekStart),
+          lte(episodes.publishedAt, weekEnd),
+          eq(episodes.status, 'complete'),
+        ),
+      )
+
+    if (recentAnalyses.length === 0) {
+      throw new Error('No completed episodes in the past week to analyze')
+    }
+
+    // Get podcast titles
+    const podcastMap = new Map<string, string>()
+    const allPodcasts = await db.select().from(podcasts)
+    for (const p of allPodcasts) {
+      podcastMap.set(p.id, p.title)
+    }
+
+    const inputs: WeeklyAnalysisInput[] = recentAnalyses.map((r) => ({
+      podcastTitle: podcastMap.get(r.podcastId) || 'Unknown',
+      episodeTitle: r.episodeTitle,
+      summary: r.summary,
+      tags: JSON.parse(r.tags),
+      themes: JSON.parse(r.themes),
+    }))
+
+    const prompt = buildWeeklyAnalysisPrompt(inputs)
+
+    const result = (await (env as any).AI.run('@cf/zai-org/glm-4.7-flash', {
+      messages: [
+        { role: 'system', content: WEEKLY_ANALYSIS_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+    })) as any
+
+    // Handle GLM response format
+    const responseText =
+      result?.choices?.[0]?.message?.content || result?.response || ''
+
+    const { analysis, trendingTopics } = parseWeeklyAnalysis(responseText)
+
+    // Delete old analyses and insert new one
+    await db.delete(weeklyAnalyses)
+
+    const id = nanoid()
+    await db.insert(weeklyAnalyses).values({
+      id,
+      weekStart,
+      weekEnd,
+      analysis,
+      trendingTopics: JSON.stringify(trendingTopics),
+      episodeIds: JSON.stringify(recentAnalyses.map((r) => r.episodeId)),
+      createdAt: now,
     })
-    .from(episodeAnalyses)
-    .innerJoin(episodes, eq(episodes.id, episodeAnalyses.episodeId))
-    .where(
-      and(
-        gte(episodes.publishedAt, weekStart),
-        lte(episodes.publishedAt, weekEnd),
-        eq(episodes.status, 'complete'),
-      ),
-    )
 
-  if (recentAnalyses.length === 0) {
-    throw new Error('No completed episodes in the past week to analyze')
-  }
-
-  // Get podcast titles
-  const podcastMap = new Map<string, string>()
-  const allPodcasts = await db.select().from(podcasts)
-  for (const p of allPodcasts) {
-    podcastMap.set(p.id, p.title)
-  }
-
-  const inputs: WeeklyAnalysisInput[] = recentAnalyses.map((r) => ({
-    podcastTitle: podcastMap.get(r.podcastId) || 'Unknown',
-    episodeTitle: r.episodeTitle,
-    summary: r.summary,
-    tags: JSON.parse(r.tags),
-    themes: JSON.parse(r.themes),
-  }))
-
-  const prompt = buildWeeklyAnalysisPrompt(inputs)
-
-  const result = (await (env as any).AI.run('@cf/zai-org/glm-4.7-flash', {
-    messages: [
-      { role: 'system', content: WEEKLY_ANALYSIS_SYSTEM_PROMPT },
-      { role: 'user', content: prompt },
-    ],
-  })) as any
-
-  const { analysis, trendingTopics } = parseWeeklyAnalysis(
-    result.response || '',
-  )
-
-  const id = nanoid()
-  await db.insert(weeklyAnalyses).values({
-    id,
-    weekStart,
-    weekEnd,
-    analysis,
-    trendingTopics: JSON.stringify(trendingTopics),
-    episodeIds: JSON.stringify(recentAnalyses.map((r) => r.episodeId)),
-    createdAt: new Date(),
-  })
-
-  return {
-    id,
-    analysis,
-    trendingTopics,
-    episodeCount: recentAnalyses.length,
+    return {
+      id,
+      analysis,
+      trendingTopics,
+      episodeCount: recentAnalyses.length,
+      cached: false,
   }
 })

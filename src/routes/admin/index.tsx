@@ -165,15 +165,21 @@ function AdminPage() {
     }
   }
 
-  const handleGenerateAnalysis = async () => {
+  const handleGenerateAnalysis = async (force = false) => {
     setGeneratingAnalysis(true)
     setError(null)
     setMessage(null)
     try {
-      const result = await generateWeeklyAnalysis()
-      setMessage(
-        `Generated weekly analysis covering ${result.episodeCount} episodes.`,
-      )
+      const result = await generateWeeklyAnalysis({ data: { force } })
+      if (result.cached) {
+        setMessage(
+          `Returned cached analysis (${result.episodeCount} episodes). Click "Force Refresh" to regenerate.`,
+        )
+      } else {
+        setMessage(
+          `Generated weekly analysis covering ${result.episodeCount} episodes.`,
+        )
+      }
     } catch (err) {
       if (isDemoError(err)) {
         handleDemoError()
@@ -281,11 +287,18 @@ function AdminPage() {
           {polling ? 'Polling...' : 'Poll All Feeds Now'}
         </button>
         <button
-          onClick={handleGenerateAnalysis}
+          onClick={() => handleGenerateAnalysis(false)}
           disabled={generatingAnalysis}
           className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
         >
-          {generatingAnalysis ? 'Generating...' : 'Generate Weekly Analysis'}
+          {generatingAnalysis ? 'Generating...' : 'Weekly Analysis'}
+        </button>
+        <button
+          onClick={() => handleGenerateAnalysis(true)}
+          disabled={generatingAnalysis}
+          className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50 text-sm font-medium"
+        >
+          Force Refresh
         </button>
         <button
           onClick={handleCancelAllJobs}
