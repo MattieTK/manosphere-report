@@ -201,9 +201,13 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
       'analyze-transcript',
       {
         retries: { limit: 2, delay: '15 seconds', backoff: 'exponential' },
-        timeout: '3 minutes',
+        timeout: '5 minutes',
       },
       async () => {
+        if (!fullTranscript || fullTranscript.length < 100) {
+          throw new Error(`Transcript too short for analysis: ${fullTranscript?.length || 0} chars`)
+        }
+
         const prompt = buildAnalysisPrompt(fullTranscript)
         const result = (await this.env.AI.run(
           '@cf/zai-org/glm-4.7-flash' as any,
@@ -215,7 +219,14 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
           },
         )) as any
 
-        return parseAnalysisResult(result.response || '')
+        // Handle different response formats from Workers AI
+        const responseText = result.response || result.content || result.text || ''
+
+        if (!responseText) {
+          throw new Error(`Empty response from GLM model. Result keys: ${Object.keys(result).join(', ')}`)
+        }
+
+        return parseAnalysisResult(responseText)
       },
     )
 

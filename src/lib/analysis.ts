@@ -33,8 +33,9 @@ export interface AnalysisResult {
 }
 
 export function buildAnalysisPrompt(transcript: string): string {
-  // Truncate very long transcripts to fit within context window
-  const maxChars = 400000 // ~100k tokens, well within 131k limit
+  // Truncate very long transcripts - use conservative limit
+  // (~50k chars = ~12k tokens to leave room for response)
+  const maxChars = 50000
   const truncated =
     transcript.length > maxChars
       ? transcript.slice(0, maxChars) + '\n\n[TRANSCRIPT TRUNCATED]'
