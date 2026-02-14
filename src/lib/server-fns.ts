@@ -177,6 +177,43 @@ export const triggerPoll = createServerFn({ method: 'POST' }).handler(
   },
 )
 
+export const cancelAllJobs = createServerFn({ method: 'POST' }).handler(
+  async () => {
+    const db = getDb(env.DB)
+
+    // Find all episodes that are currently processing
+    const inProgressStatuses = ['downloading', 'transcribing', 'analyzing']
+    const inProgressEpisodes = await db
+      .select({ id: episodes.id, workflowId: episodes.workflowId })
+      .from(episodes)
+      .where(sql`${episodes.status} IN ('downloading', 'transcribing', 'analyzing')`)
+
+    let cancelledCount = 0
+
+    for (const episode of inProgressEpisodes) {
+      // Attempt to cancel the workflow if it exists
+      if (episode.workflowId) {
+        try {
+          const instance = await (env as any).EPISODE_WORKFLOW.get(episode.workflowId)
+          await instance.abort()
+        } catch {
+          // Workflow may already be completed or not exist
+        }
+      }
+
+      // Reset to pending
+      await db
+        .update(episodes)
+        .set({ status: 'pending', workflowId: null, errorMessage: null })
+        .where(eq(episodes.id, episode.id))
+
+      cancelledCount++
+    }
+
+    return { cancelledCount }
+  },
+)
+
 export const processEpisode = createServerFn({ method: 'POST' })
   .inputValidator(
     (input: { episodeId: string; podcastId: string; audioUrl: string }) =>
@@ -216,7 +253,12 @@ export const importPastEpisodes = createServerFn({ method: 'POST' })
     const feed = await parseFeed(podcast.feedUrl)
     let importedCount = 0
 
-    for (const item of feed.items) {
+    // Sort by publish date descending and limit to most recent 5 episodes
+    const sortedItems = [...feed.items]
+      .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
+      .slice(0, 5)
+
+    for (const item of sortedItems) {
       // Only import episodes published BEFORE the podcast was added
       if (item.publishedAt >= podcast.addedAt) continue
 

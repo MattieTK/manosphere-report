@@ -9,6 +9,7 @@ import {
   processEpisode,
   importPastEpisodes,
   generateWeeklyAnalysis,
+  cancelAllJobs,
 } from '~/lib/server-fns'
 
 export const Route = createFileRoute('/admin/')({
@@ -23,6 +24,7 @@ function AdminPage() {
   const [adding, setAdding] = useState(false)
   const [polling, setPolling] = useState(false)
   const [generatingAnalysis, setGeneratingAnalysis] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -132,6 +134,24 @@ function AdminPage() {
     }
   }
 
+  const handleCancelAllJobs = async () => {
+    if (!confirm('Cancel all running jobs and reset them to pending?')) return
+    setCancelling(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await cancelAllJobs()
+      setMessage(`Cancelled ${result.cancelledCount} running job(s).`)
+      router.invalidate()
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to cancel jobs',
+      )
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
@@ -195,6 +215,13 @@ function AdminPage() {
           className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
         >
           {generatingAnalysis ? 'Generating...' : 'Generate Weekly Analysis'}
+        </button>
+        <button
+          onClick={handleCancelAllJobs}
+          disabled={cancelling}
+          className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 text-sm font-medium"
+        >
+          {cancelling ? 'Cancelling...' : 'Cancel All Jobs'}
         </button>
       </section>
 
