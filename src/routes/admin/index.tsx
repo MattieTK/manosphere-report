@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import {
   getAdminData,
+  getIsDemo,
   addPodcast,
   togglePodcast,
   removePodcast,
@@ -13,13 +14,26 @@ import {
   cancelAllJobs,
 } from '~/lib/server-fns'
 
+const DEMO_MESSAGE =
+  'This is a demo instance. To add your own podcasts, deploy this tool to your own Cloudflare account.'
+
+function isDemoError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('DEMO_MODE')
+}
+
 export const Route = createFileRoute('/admin/')({
-  loader: () => getAdminData(),
+  loader: async () => {
+    const [adminData, demoData] = await Promise.all([
+      getAdminData(),
+      getIsDemo(),
+    ])
+    return { ...adminData, isDemo: demoData.isDemo }
+  },
   component: AdminPage,
 })
 
 function AdminPage() {
-  const { podcasts } = Route.useLoaderData()
+  const { podcasts, isDemo } = Route.useLoaderData()
   const router = useRouter()
   const [feedUrl, setFeedUrl] = useState('')
   const [adding, setAdding] = useState(false)
@@ -28,6 +42,12 @@ function AdminPage() {
   const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [demoToast, setDemoToast] = useState(false)
+
+  const handleDemoError = () => {
+    setDemoToast(true)
+    setTimeout(() => setDemoToast(false), 5000)
+  }
 
   const handleAddPodcast = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -44,7 +64,11 @@ function AdminPage() {
       setFeedUrl('')
       router.invalidate()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add podcast')
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to add podcast')
+      }
     } finally {
       setAdding(false)
     }
@@ -59,7 +83,11 @@ function AdminPage() {
       setMessage('Poll triggered successfully. New episodes will appear shortly.')
       router.invalidate()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to trigger poll')
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to trigger poll')
+      }
     } finally {
       setPolling(false)
     }
@@ -70,9 +98,11 @@ function AdminPage() {
       await togglePodcast({ data: { podcastId, active: !active } })
       router.invalidate()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to toggle podcast',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to toggle podcast')
+      }
     }
   }
 
@@ -83,9 +113,11 @@ function AdminPage() {
       setMessage(`Deleted "${title}" and ${result.deletedEpisodes} episode(s).`)
       router.invalidate()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to remove podcast',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to remove podcast')
+      }
     }
   }
 
@@ -98,9 +130,11 @@ function AdminPage() {
       await processEpisode({ data: { episodeId, podcastId, audioUrl } })
       router.invalidate()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to trigger processing',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to trigger processing')
+      }
     }
   }
 
@@ -109,9 +143,11 @@ function AdminPage() {
       await resetEpisode({ data: { episodeId } })
       router.invalidate()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to reset episode',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to reset episode')
+      }
     }
   }
 
@@ -121,9 +157,11 @@ function AdminPage() {
       setMessage(`Imported ${result.importedCount} past episodes.`)
       router.invalidate()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to import past episodes',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to import past episodes')
+      }
     }
   }
 
@@ -137,11 +175,13 @@ function AdminPage() {
         `Generated weekly analysis covering ${result.episodeCount} episodes.`,
       )
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to generate weekly analysis',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Failed to generate weekly analysis',
+        )
+      }
     } finally {
       setGeneratingAnalysis(false)
     }
@@ -157,9 +197,11 @@ function AdminPage() {
       setMessage(`Cancelled ${result.cancelledCount} running job(s).`)
       router.invalidate()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to cancel jobs',
-      )
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to cancel jobs')
+      }
     } finally {
       setCancelling(false)
     }
@@ -167,6 +209,22 @@ function AdminPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Demo Mode Toast */}
+      {demoToast && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm p-4 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg shadow-lg">
+          <p className="font-medium mb-1">Demo Mode</p>
+          <p className="text-sm">{DEMO_MESSAGE}</p>
+        </div>
+      )}
+
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg">
+          <p className="font-medium">Demo Mode</p>
+          <p className="text-sm mt-1">{DEMO_MESSAGE}</p>
+        </div>
+      )}
+
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2">Admin Panel</h1>
         <p className="text-gray-600 dark:text-gray-400">

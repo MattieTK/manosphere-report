@@ -38,5 +38,9 @@
 
   "triggers": {
     "crons": ["0 */6 * * *"]
+  },
+
+  "vars": {
+    "IS_DEMO": "false"
   }
 }

@@ -27,7 +27,7 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
   async run(event: WorkflowEvent<EpisodePayload>, step: WorkflowStep) {
     const { episodeId, podcastId, audioUrl } = event.payload
 
-    // Step 1: Download audio to R2
+    // Step 1: Download audio to R2 (skip if already exists)
     const r2Key = await step.do(
       'download-audio',
       {
@@ -36,12 +36,24 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
       },
       async () => {
         const db = getDb(this.env.DB)
+        const key = `podcasts/${podcastId}/episodes/${episodeId}.mp3`
+
+        // Check if file already exists in R2
+        const existing = await this.env.AUDIO_BUCKET.head(key)
+        if (existing) {
+          // File exists, just update the r2Key reference
+          await db
+            .update(episodes)
+            .set({ r2Key: key })
+            .where(eq(episodes.id, episodeId))
+          return key
+        }
+
         await db
           .update(episodes)
           .set({ status: 'downloading' })
           .where(eq(episodes.id, episodeId))
 
-        const key = `podcasts/${podcastId}/episodes/${episodeId}.mp3`
         const response = await fetch(audioUrl)
         if (!response.ok)
           throw new Error(`Download failed: ${response.status}`)
@@ -59,7 +71,7 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
       },
     )
 
-    // Step 2: Transcribe audio
+    // Step 2: Get audio file size and calculate chunks
     await step.do('update-status-transcribing', async () => {
       const db = getDb(this.env.DB)
       await db
@@ -68,54 +80,88 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
         .where(eq(episodes.id, episodeId))
     })
 
-    const transcription = await step.do(
-      'transcribe-audio',
-      {
-        retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' },
-        timeout: '30 minutes',
-      },
-      async () => {
-        const audioObj = await this.env.AUDIO_BUCKET.get(r2Key)
-        if (!audioObj) throw new Error('Audio not found in R2')
+    const audioMeta = await step.do('get-audio-metadata', async () => {
+      const audioObj = await this.env.AUDIO_BUCKET.head(r2Key)
+      if (!audioObj) throw new Error('Audio not found in R2')
+      return { size: audioObj.size }
+    })
 
-        const audioBuffer = await audioObj.arrayBuffer()
-        const bytes = new Uint8Array(audioBuffer)
-        let binary = ''
-        for (let j = 0; j < bytes.length; j++) {
-          binary += String.fromCharCode(bytes[j])
-        }
-        const base64 = btoa(binary)
+    // Process in 10MB chunks to stay within 128MB memory limit
+    const CHUNK_SIZE = 10 * 1024 * 1024
+    const numChunks = Math.ceil(audioMeta.size / CHUNK_SIZE)
 
-        const whisperResult = await this.env.AI.run(
-          '@cf/openai/whisper-large-v3-turbo',
-          {
-            audio: base64,
-            language: 'en',
-          },
-        )
+    const transcriptions: Array<{ text: string; words: Word[]; duration: number }> = []
+    let cumulativeOffset = 0
 
-        const text = whisperResult.text || ''
-        const words: Word[] = ((whisperResult as any).words || []).map((w: any) => ({
-          word: w.word,
-          start: w.start,
-          end: w.end,
-        }))
-        const duration = (whisperResult as any).transcription_info?.duration || 0
+    for (let i = 0; i < numChunks; i++) {
+      const chunkResult = await step.do(
+        `transcribe-chunk-${i}`,
+        {
+          retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' },
+          timeout: '5 minutes',
+        },
+        async () => {
+          const start = i * CHUNK_SIZE
+          const end = Math.min(start + CHUNK_SIZE - 1, audioMeta.size - 1)
 
-        if (!text.trim()) {
-          throw new Error('Transcription returned empty result')
-        }
+          const audioObj = await this.env.AUDIO_BUCKET.get(r2Key, {
+            range: { offset: start, length: end - start + 1 },
+          })
+          if (!audioObj) throw new Error(`Chunk ${i} not found in R2`)
 
-        return { text, words, duration }
-      },
-    )
+          const audioBuffer = await audioObj.arrayBuffer()
+          const bytes = new Uint8Array(audioBuffer)
+          let binary = ''
+          for (let j = 0; j < bytes.length; j++) {
+            binary += String.fromCharCode(bytes[j])
+          }
+          const base64 = btoa(binary)
+
+          const whisperResult = await this.env.AI.run(
+            '@cf/openai/whisper-large-v3-turbo',
+            {
+              audio: base64,
+              language: 'en',
+            },
+          )
+
+          return {
+            text: whisperResult.text || '',
+            words: (whisperResult as any).words || [],
+            duration: (whisperResult as any).transcription_info?.duration || 0,
+          }
+        },
+      )
+
+      // Offset word timestamps by cumulative duration
+      const offsetWords: Word[] = chunkResult.words.map((w: any) => ({
+        word: w.word,
+        start: w.start + cumulativeOffset,
+        end: w.end + cumulativeOffset,
+      }))
+
+      transcriptions.push({
+        text: chunkResult.text,
+        words: offsetWords,
+        duration: chunkResult.duration,
+      })
+      cumulativeOffset += chunkResult.duration
+    }
+
+    // Merge all transcriptions
+    const allWords = transcriptions.flatMap((t) => t.words)
+    const fullText = transcriptions.map((t) => t.text).join(' ')
+
+    if (!fullText.trim()) {
+      throw new Error('Transcription returned empty result')
+    }
 
     // Step 3: Store transcript segments in D1
     const fullTranscript = await step.do(
       'store-transcript',
       { timeout: '2 minutes' },
       async () => {
-        const segments = groupWordsIntoSegments(transcription.words, 15)
+        const segments = groupWordsIntoSegments(allWords, 15)
 
         const db = getDb(this.env.DB)
 
@@ -135,10 +181,10 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
         // Update episode duration
         await db
           .update(episodes)
-          .set({ durationSeconds: Math.round(transcription.duration) })
+          .set({ durationSeconds: Math.round(cumulativeOffset) })
           .where(eq(episodes.id, episodeId))
 
-        return transcription.text
+        return fullText
       },
     )
 

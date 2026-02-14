@@ -18,6 +18,25 @@ import {
   type WeeklyAnalysisInput,
 } from '~/lib/analysis'
 
+// ==================== Demo Mode ====================
+
+export class DemoModeError extends Error {
+  constructor() {
+    super('DEMO_MODE')
+    this.name = 'DemoModeError'
+  }
+}
+
+function assertNotDemo() {
+  if (String(env.IS_DEMO) === 'true') {
+    throw new DemoModeError()
+  }
+}
+
+export const getIsDemo = createServerFn({ method: 'GET' }).handler(async () => {
+  return { isDemo: String(env.IS_DEMO) === 'true' }
+})
+
 // ==================== Podcast Functions ====================
 
 export const getHomepageData = createServerFn({ method: 'GET' }).handler(
@@ -128,6 +147,7 @@ export const getEpisodeDetail = createServerFn({ method: 'GET' })
 export const addPodcast = createServerFn({ method: 'POST' })
   .inputValidator((input: { feedUrl: string }) => input)
   .handler(async ({ data }) => {
+    assertNotDemo()
     // Resolve Apple Podcasts / iTunes links to RSS feed URLs
     const feedUrl = await resolveToFeedUrl(data.feedUrl)
     const feed = await parseFeed(feedUrl)
@@ -151,6 +171,7 @@ export const addPodcast = createServerFn({ method: 'POST' })
 export const removePodcast = createServerFn({ method: 'POST' })
   .inputValidator((input: { podcastId: string }) => input)
   .handler(async ({ data }) => {
+    assertNotDemo()
     const db = getDb(env.DB)
 
     // Get all episodes for this podcast
@@ -197,6 +218,7 @@ export const removePodcast = createServerFn({ method: 'POST' })
 export const togglePodcast = createServerFn({ method: 'POST' })
   .inputValidator((input: { podcastId: string; active: boolean }) => input)
   .handler(async ({ data }) => {
+    assertNotDemo()
     const db = getDb(env.DB)
     await db
       .update(podcasts)
@@ -207,6 +229,7 @@ export const togglePodcast = createServerFn({ method: 'POST' })
 
 export const triggerPoll = createServerFn({ method: 'POST' }).handler(
   async () => {
+    assertNotDemo()
     await pollAllFeeds(env as any)
     return { success: true }
   },
@@ -214,6 +237,7 @@ export const triggerPoll = createServerFn({ method: 'POST' }).handler(
 
 export const cancelAllJobs = createServerFn({ method: 'POST' }).handler(
   async () => {
+    assertNotDemo()
     const db = getDb(env.DB)
 
     // Find all episodes that are currently processing
@@ -252,6 +276,7 @@ export const cancelAllJobs = createServerFn({ method: 'POST' }).handler(
 export const resetEpisode = createServerFn({ method: 'POST' })
   .inputValidator((input: { episodeId: string }) => input)
   .handler(async ({ data }) => {
+    assertNotDemo()
     const db = getDb(env.DB)
 
     // Delete existing transcript segments
@@ -279,6 +304,7 @@ export const processEpisode = createServerFn({ method: 'POST' })
       input,
   )
   .handler(async ({ data }) => {
+    assertNotDemo()
     const instance = await (env as any).EPISODE_WORKFLOW.create({
       params: {
         episodeId: data.episodeId,
@@ -299,6 +325,7 @@ export const processEpisode = createServerFn({ method: 'POST' })
 export const importPastEpisodes = createServerFn({ method: 'POST' })
   .inputValidator((input: { podcastId: string }) => input)
   .handler(async ({ data }) => {
+    assertNotDemo()
     const db = getDb(env.DB)
 
     const [podcast] = await db
@@ -382,6 +409,7 @@ export const getAdminData = createServerFn({ method: 'GET' }).handler(
 export const generateWeeklyAnalysis = createServerFn({
   method: 'POST',
 }).handler(async () => {
+  assertNotDemo()
   const db = getDb(env.DB)
   const weekEnd = new Date()
   const weekStart = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000)
