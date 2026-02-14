@@ -59,37 +59,7 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
       },
     )
 
-    // Step 2: Split audio into chunks and store in R2
-    const chunkKeys = await step.do(
-      'chunk-audio',
-      { timeout: '5 minutes' },
-      async () => {
-        const object = await this.env.AUDIO_BUCKET.get(r2Key)
-        if (!object) throw new Error('Audio not found in R2')
-
-        const audioBuffer = await object.arrayBuffer()
-        const CHUNK_SIZE = 1 * 1024 * 1024 // 1MB
-        const chunks: string[] = []
-
-        for (
-          let offset = 0;
-          offset < audioBuffer.byteLength;
-          offset += CHUNK_SIZE
-        ) {
-          const chunk = audioBuffer.slice(
-            offset,
-            Math.min(offset + CHUNK_SIZE, audioBuffer.byteLength),
-          )
-          const chunkKey = `podcasts/${podcastId}/episodes/${episodeId}/chunk_${chunks.length}.mp3`
-          await this.env.AUDIO_BUCKET.put(chunkKey, chunk)
-          chunks.push(chunkKey)
-        }
-
-        return chunks
-      },
-    )
-
-    // Step 3: Transcribe each chunk
+    // Step 2: Transcribe audio
     await step.do('update-status-transcribing', async () => {
       const db = getDb(this.env.DB)
       await db
@@ -98,74 +68,54 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
         .where(eq(episodes.id, episodeId))
     })
 
-    const transcriptions: Array<{
-      text: string
-      words: Word[]
-      duration: number
-    }> = []
-    let cumulativeOffset = 0
+    const transcription = await step.do(
+      'transcribe-audio',
+      {
+        retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' },
+        timeout: '30 minutes',
+      },
+      async () => {
+        const audioObj = await this.env.AUDIO_BUCKET.get(r2Key)
+        if (!audioObj) throw new Error('Audio not found in R2')
 
-    for (let i = 0; i < chunkKeys.length; i++) {
-      const result = await step.do(
-        `transcribe-chunk-${i}`,
-        {
-          retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
-          timeout: '2 minutes',
-        },
-        async () => {
-          const chunkObj = await this.env.AUDIO_BUCKET.get(chunkKeys[i])
-          if (!chunkObj) throw new Error(`Chunk ${i} not found`)
+        const audioBuffer = await audioObj.arrayBuffer()
+        const bytes = new Uint8Array(audioBuffer)
+        let binary = ''
+        for (let j = 0; j < bytes.length; j++) {
+          binary += String.fromCharCode(bytes[j])
+        }
+        const base64 = btoa(binary)
 
-          const chunkBuffer = await chunkObj.arrayBuffer()
-          const bytes = new Uint8Array(chunkBuffer)
-          let binary = ''
-          for (let j = 0; j < bytes.length; j++) {
-            binary += String.fromCharCode(bytes[j])
-          }
-          const base64 = btoa(binary)
+        const whisperResult = await this.env.AI.run(
+          '@cf/openai/whisper-large-v3-turbo',
+          {
+            audio: base64,
+            language: 'en',
+          },
+        )
 
-          const whisperResult = await this.env.AI.run(
-            '@cf/openai/whisper-large-v3-turbo',
-            {
-              audio: base64,
-              language: 'en',
-            },
-          )
+        const text = whisperResult.text || ''
+        const words: Word[] = ((whisperResult as any).words || []).map((w: any) => ({
+          word: w.word,
+          start: w.start,
+          end: w.end,
+        }))
+        const duration = (whisperResult as any).transcription_info?.duration || 0
 
-          return {
-            text: whisperResult.text || '',
-            words: (whisperResult as any).words || [],
-            duration:
-              (whisperResult as any).transcription_info?.duration || 30,
-          }
-        },
-      )
+        if (!text.trim()) {
+          throw new Error('Transcription returned empty result')
+        }
 
-      // Offset word timestamps by cumulative duration
-      const offsetWords: Word[] = result.words.map((w: any) => ({
-        word: w.word,
-        start: w.start + cumulativeOffset,
-        end: w.end + cumulativeOffset,
-      }))
+        return { text, words, duration }
+      },
+    )
 
-      transcriptions.push({
-        text: result.text,
-        words: offsetWords,
-        duration: result.duration,
-      })
-      cumulativeOffset += result.duration
-    }
-
-    // Step 4: Merge transcript and store segments in D1
+    // Step 3: Store transcript segments in D1
     const fullTranscript = await step.do(
       'store-transcript',
       { timeout: '2 minutes' },
       async () => {
-        const allWords = transcriptions.flatMap((t) => t.words)
-        const fullText = transcriptions.map((t) => t.text).join(' ')
-
-        // Group words into sentence-like segments
-        const segments = groupWordsIntoSegments(allWords, 15)
+        const segments = groupWordsIntoSegments(transcription.words, 15)
 
         const db = getDb(this.env.DB)
 
@@ -185,14 +135,14 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
         // Update episode duration
         await db
           .update(episodes)
-          .set({ durationSeconds: Math.round(cumulativeOffset) })
+          .set({ durationSeconds: Math.round(transcription.duration) })
           .where(eq(episodes.id, episodeId))
 
-        return fullText
+        return transcription.text
       },
     )
 
-    // Step 5: Analyze transcript with GLM-4.7-Flash
+    // Step 4: Analyze transcript with GLM-4.7-Flash
     await step.do('update-status-analyzing', async () => {
       const db = getDb(this.env.DB)
       await db
@@ -223,7 +173,7 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
       },
     )
 
-    // Step 6: Store analysis in D1
+    // Step 5: Store analysis in D1
     await step.do('store-analysis', async () => {
       const db = getDb(this.env.DB)
       await db.insert(episodeAnalyses).values({
@@ -241,13 +191,6 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
         .update(episodes)
         .set({ status: 'complete' })
         .where(eq(episodes.id, episodeId))
-    })
-
-    // Step 7: Clean up temporary chunk files from R2
-    await step.do('cleanup-chunks', async () => {
-      for (const chunkKey of chunkKeys) {
-        await this.env.AUDIO_BUCKET.delete(chunkKey)
-      }
     })
   }
 }
