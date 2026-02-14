@@ -152,11 +152,46 @@ export const removePodcast = createServerFn({ method: 'POST' })
   .inputValidator((input: { podcastId: string }) => input)
   .handler(async ({ data }) => {
     const db = getDb(env.DB)
-    await db
-      .update(podcasts)
-      .set({ active: false })
-      .where(eq(podcasts.id, data.podcastId))
-    return { success: true }
+
+    // Get all episodes for this podcast
+    const podcastEpisodes = await db
+      .select({ id: episodes.id, r2Key: episodes.r2Key })
+      .from(episodes)
+      .where(eq(episodes.podcastId, data.podcastId))
+
+    // Delete R2 files for each episode
+    for (const episode of podcastEpisodes) {
+      if (episode.r2Key) {
+        try {
+          await (env as any).AUDIO_BUCKET.delete(episode.r2Key)
+        } catch {
+          // File may not exist, continue anyway
+        }
+      }
+    }
+
+    // Delete related records (order matters due to foreign keys)
+    const episodeIds = podcastEpisodes.map((e) => e.id)
+
+    if (episodeIds.length > 0) {
+      // Delete transcript segments
+      await db
+        .delete(transcriptSegments)
+        .where(sql`${transcriptSegments.episodeId} IN (${sql.join(episodeIds.map(id => sql`${id}`), sql`, `)})`)
+
+      // Delete episode analyses
+      await db
+        .delete(episodeAnalyses)
+        .where(sql`${episodeAnalyses.episodeId} IN (${sql.join(episodeIds.map(id => sql`${id}`), sql`, `)})`)
+
+      // Delete episodes
+      await db.delete(episodes).where(eq(episodes.podcastId, data.podcastId))
+    }
+
+    // Delete the podcast
+    await db.delete(podcasts).where(eq(podcasts.id, data.podcastId))
+
+    return { success: true, deletedEpisodes: episodeIds.length }
   })
 
 export const togglePodcast = createServerFn({ method: 'POST' })

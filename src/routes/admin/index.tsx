@@ -76,9 +76,10 @@ function AdminPage() {
   }
 
   const handleRemove = async (podcastId: string, title: string) => {
-    if (!confirm(`Remove "${title}" from tracking?`)) return
+    if (!confirm(`Permanently delete "${title}" and all its episodes? This cannot be undone.`)) return
     try {
-      await removePodcast({ data: { podcastId } })
+      const result = await removePodcast({ data: { podcastId } })
+      setMessage(`Deleted "${title}" and ${result.deletedEpisodes} episode(s).`)
       router.invalidate()
     } catch (err) {
       setError(
