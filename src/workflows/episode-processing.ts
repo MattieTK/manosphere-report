@@ -14,6 +14,17 @@ import {
   parseAnalysisResult,
 } from '~/lib/analysis'
 
+/** Efficiently convert a Uint8Array to base64 without per-byte string concatenation */
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const CHUNK = 8192
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
+    binary += String.fromCharCode(...slice)
+  }
+  return btoa(binary)
+}
+
 type EpisodePayload = {
   episodeId: string
   podcastId: string
@@ -117,26 +128,35 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
           if (!chunkObj) throw new Error(`Chunk ${i} not found`)
 
           const chunkBuffer = await chunkObj.arrayBuffer()
-          const bytes = new Uint8Array(chunkBuffer)
-          let binary = ''
-          for (let j = 0; j < bytes.length; j++) {
-            binary += String.fromCharCode(bytes[j])
-          }
-          const base64 = btoa(binary)
+          const base64 = uint8ArrayToBase64(new Uint8Array(chunkBuffer))
 
-          const whisperResult = await this.env.AI.run(
+          const whisperResult = (await this.env.AI.run(
             '@cf/openai/whisper-large-v3-turbo',
             {
               audio: base64,
               language: 'en',
             },
-          )
+          )) as any
+
+          // Words are nested inside segments, not at the response root
+          const words: Array<{
+            word: string
+            start: number
+            end: number
+          }> = []
+          if (Array.isArray(whisperResult.segments)) {
+            for (const segment of whisperResult.segments) {
+              if (Array.isArray(segment.words)) {
+                words.push(...segment.words)
+              }
+            }
+          }
 
           return {
             text: whisperResult.text || '',
-            words: (whisperResult as any).words || [],
+            words,
             duration:
-              (whisperResult as any).transcription_info?.duration || 30,
+              whisperResult.transcription_info?.duration || 30,
           }
         },
       )
@@ -164,8 +184,40 @@ export class EpisodeProcessingWorkflow extends WorkflowEntrypoint<
         const allWords = transcriptions.flatMap((t) => t.words)
         const fullText = transcriptions.map((t) => t.text).join(' ')
 
-        // Group words into sentence-like segments
-        const segments = groupWordsIntoSegments(allWords, 15)
+        let segments: Array<{
+          text: string
+          startTime: number
+          endTime: number
+          words: Word[]
+        }>
+
+        if (allWords.length > 0) {
+          // Primary path: group word-level timestamps into segments
+          segments = groupWordsIntoSegments(allWords, 15)
+        } else {
+          // Fallback: create segments from chunk text with estimated timing
+          // This handles cases where Whisper doesn't return word timestamps
+          let timeOffset = 0
+          segments = []
+          for (const t of transcriptions) {
+            if (!t.text.trim()) continue
+            // Split chunk text into sentences
+            const sentences = t.text
+              .split(/(?<=[.!?])\s+/)
+              .filter((s) => s.trim())
+            const sentenceDuration =
+              sentences.length > 0 ? t.duration / sentences.length : t.duration
+            for (const sentence of sentences) {
+              segments.push({
+                text: sentence.trim(),
+                startTime: timeOffset,
+                endTime: timeOffset + sentenceDuration,
+                words: [],
+              })
+              timeOffset += sentenceDuration
+            }
+          }
+        }
 
         const db = getDb(this.env.DB)
 
