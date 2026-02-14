@@ -11,8 +11,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "manosphere-report-db",
-      "database_id": "local"
+      "database_name": "manosphere-report-db"
     }
   ],
 
