@@ -297,13 +297,46 @@ export const cancelAllJobs = createServerFn({ method: 'POST' }).handler(
   },
 )
 
-// Deletes audio for episodes older than two weeks before the most recently
-// downloaded episode. Anchors on the latest downloaded episode (not the
-// current date) so it works correctly while in stasis mode.
+// Parses retention strings like "30m", "12h", "2d", "2w" into milliseconds.
+// Returns null if the input is missing or malformed.
+const RETENTION_UNITS: Record<string, number> = {
+  m: 60 * 1000,
+  h: 60 * 60 * 1000,
+  d: 24 * 60 * 60 * 1000,
+  w: 7 * 24 * 60 * 60 * 1000,
+}
+
+function parseRetention(raw: unknown): { ms: number; label: string } | null {
+  if (typeof raw !== 'string') return null
+  const match = raw.trim().match(/^(\d+)\s*([mhdw])$/i)
+  if (!match) return null
+  const value = parseInt(match[1], 10)
+  const unit = match[2].toLowerCase()
+  const unitMs = RETENTION_UNITS[unit]
+  if (!value || !unitMs) return null
+  return { ms: value * unitMs, label: `${value}${unit}` }
+}
+
+const DEFAULT_RETENTION = { ms: 14 * 24 * 60 * 60 * 1000, label: '2w' }
+
+export const getRetentionPeriod = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    const parsed = parseRetention((env as any).RETENTION_PERIOD)
+    return { retention: (parsed ?? DEFAULT_RETENTION).label }
+  },
+)
+
+// Deletes episodes older than the configured retention period before the most
+// recently downloaded episode (audio in R2, transcript segments, analyses, and
+// the episode row). Anchors on the latest downloaded episode (not the current
+// date) so it works correctly while in stasis mode.
 export const cleanupOldAudio = createServerFn({ method: 'POST' }).handler(
   async () => {
     assertNotDemo()
     const db = getDb(env.DB)
+
+    const retention =
+      parseRetention((env as any).RETENTION_PERIOD) ?? DEFAULT_RETENTION
 
     const [latestDownloaded] = await db
       .select({ publishedAt: episodes.publishedAt })
@@ -313,40 +346,61 @@ export const cleanupOldAudio = createServerFn({ method: 'POST' }).handler(
       .limit(1)
 
     if (!latestDownloaded) {
-      return { deletedCount: 0, anchorDate: null, cutoffDate: null }
+      return {
+        deletedCount: 0,
+        anchorDate: null,
+        cutoffDate: null,
+        retention: retention.label,
+      }
     }
 
     const anchorDate = latestDownloaded.publishedAt
-    const cutoffDate = new Date(
-      anchorDate.getTime() - 14 * 24 * 60 * 60 * 1000,
-    )
+    const cutoffDate = new Date(anchorDate.getTime() - retention.ms)
 
     const oldEpisodes = await db
       .select({ id: episodes.id, r2Key: episodes.r2Key })
       .from(episodes)
-      .where(
-        and(isNotNull(episodes.r2Key), lt(episodes.publishedAt, cutoffDate)),
-      )
+      .where(lt(episodes.publishedAt, cutoffDate))
 
-    let deletedCount = 0
+    if (oldEpisodes.length === 0) {
+      return {
+        deletedCount: 0,
+        anchorDate: anchorDate.toISOString(),
+        cutoffDate: cutoffDate.toISOString(),
+        retention: retention.label,
+      }
+    }
+
     for (const episode of oldEpisodes) {
       if (!episode.r2Key) continue
       try {
         await (env as any).AUDIO_BUCKET.delete(episode.r2Key)
       } catch {
-        // File may not exist; clear the reference anyway
+        // File may not exist; proceed with row deletion anyway
       }
-      await db
-        .update(episodes)
-        .set({ r2Key: null })
-        .where(eq(episodes.id, episode.id))
-      deletedCount++
     }
 
+    const oldEpisodeIds = oldEpisodes.map((e) => e.id)
+    const idList = sql.join(
+      oldEpisodeIds.map((id) => sql`${id}`),
+      sql`, `,
+    )
+
+    await db
+      .delete(transcriptSegments)
+      .where(sql`${transcriptSegments.episodeId} IN (${idList})`)
+
+    await db
+      .delete(episodeAnalyses)
+      .where(sql`${episodeAnalyses.episodeId} IN (${idList})`)
+
+    await db.delete(episodes).where(sql`${episodes.id} IN (${idList})`)
+
     return {
-      deletedCount,
+      deletedCount: oldEpisodes.length,
       anchorDate: anchorDate.toISOString(),
       cutoffDate: cutoffDate.toISOString(),
+      retention: retention.label,
     }
   },
 )

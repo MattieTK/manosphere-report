@@ -4,6 +4,7 @@ import {
   getAdminData,
   getIsDemo,
   getIsStasis,
+  getRetentionPeriod,
   addPodcast,
   togglePodcast,
   removePodcast,
@@ -25,22 +26,24 @@ function isDemoError(err: unknown): boolean {
 
 export const Route = createFileRoute('/admin/')({
   loader: async () => {
-    const [adminData, demoData, stasisData] = await Promise.all([
+    const [adminData, demoData, stasisData, retentionData] = await Promise.all([
       getAdminData(),
       getIsDemo(),
       getIsStasis(),
+      getRetentionPeriod(),
     ])
     return {
       ...adminData,
       isDemo: demoData.isDemo,
       isStasis: stasisData.isStasis,
+      retention: retentionData.retention,
     }
   },
   component: AdminPage,
 })
 
 function AdminPage() {
-  const { podcasts, isDemo, isStasis } = Route.useLoaderData()
+  const { podcasts, isDemo, isStasis, retention } = Route.useLoaderData()
   const router = useRouter()
   const [feedUrl, setFeedUrl] = useState('')
   const [adding, setAdding] = useState(false)
@@ -204,7 +207,7 @@ function AdminPage() {
   const handleCleanupAudio = async () => {
     if (
       !confirm(
-        'Delete audio files older than two weeks before the most recent download? Transcripts and analyses are kept.',
+        `Delete episodes older than ${retention} before the most recent download? Audio, transcripts, and analyses for those episodes will be removed.`,
       )
     )
       return
@@ -214,13 +217,13 @@ function AdminPage() {
     try {
       const result = await cleanupOldAudio()
       if (result.deletedCount === 0) {
-        setMessage('No audio files to clean up.')
+        setMessage('No episodes to clean up.')
       } else {
         const cutoff = result.cutoffDate
           ? new Date(result.cutoffDate).toLocaleDateString()
           : ''
         setMessage(
-          `Deleted ${result.deletedCount} audio file(s) published before ${cutoff}.`,
+          `Deleted ${result.deletedCount} episode(s) published before ${cutoff} (retention: ${result.retention}).`,
         )
       }
       router.invalidate()
@@ -228,7 +231,7 @@ function AdminPage() {
       if (isDemoError(err)) {
         handleDemoError()
       } else {
-        setError(err instanceof Error ? err.message : 'Failed to clean up audio')
+        setError(err instanceof Error ? err.message : 'Failed to clean up episodes')
       }
     } finally {
       setCleaningAudio(false)
@@ -377,7 +380,7 @@ function AdminPage() {
               disabled={cleaningAudio}
               className="btn btn-danger"
             >
-              {cleaningAudio ? 'Cleaning\u2026' : 'Clean Up Old Audio'}
+              {cleaningAudio ? 'Cleaning\u2026' : `Clean Up Older Than ${retention}`}
             </button>
             <button
               onClick={handleCancelAllJobs}
