@@ -43,7 +43,7 @@
 	},
 
 	"vars": {
-		"IS_DEMO": "false",
-		"IS_STASIS": "false",
+		"IS_DEMO": "true",
+		"IS_STASIS": "true",
 	},
 }
