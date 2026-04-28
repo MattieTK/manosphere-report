@@ -44,5 +44,6 @@
 
 	"vars": {
 		"IS_DEMO": "false",
+		"IS_STASIS": "false",
 	},
 }

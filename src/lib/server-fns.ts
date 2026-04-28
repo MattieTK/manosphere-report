@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { env } from 'cloudflare:workers'
-import { eq, desc, and, gte, lte, sql, count } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, lt, sql, count, isNotNull } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { getDb } from '~/db'
 import {
@@ -36,6 +36,29 @@ function assertNotDemo() {
 export const getIsDemo = createServerFn({ method: 'GET' }).handler(async () => {
   return { isDemo: String(env.IS_DEMO) === 'true' }
 })
+
+// ==================== Stasis Mode ====================
+// In stasis mode, no new audio is downloaded and no transcription runs.
+// Used to freeze a demo deployment so it stops accruing usage costs.
+
+export class StasisModeError extends Error {
+  constructor() {
+    super('STASIS_MODE')
+    this.name = 'StasisModeError'
+  }
+}
+
+function assertNotStasis() {
+  if (String((env as any).IS_STASIS) === 'true') {
+    throw new StasisModeError()
+  }
+}
+
+export const getIsStasis = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    return { isStasis: String((env as any).IS_STASIS) === 'true' }
+  },
+)
 
 // ==================== Podcast Functions ====================
 
@@ -230,6 +253,7 @@ export const togglePodcast = createServerFn({ method: 'POST' })
 export const triggerPoll = createServerFn({ method: 'POST' }).handler(
   async () => {
     assertNotDemo()
+    assertNotStasis()
     await pollAllFeeds(env as any)
     return { success: true }
   },
@@ -273,6 +297,60 @@ export const cancelAllJobs = createServerFn({ method: 'POST' }).handler(
   },
 )
 
+// Deletes audio for episodes older than two weeks before the most recently
+// downloaded episode. Anchors on the latest downloaded episode (not the
+// current date) so it works correctly while in stasis mode.
+export const cleanupOldAudio = createServerFn({ method: 'POST' }).handler(
+  async () => {
+    assertNotDemo()
+    const db = getDb(env.DB)
+
+    const [latestDownloaded] = await db
+      .select({ publishedAt: episodes.publishedAt })
+      .from(episodes)
+      .where(isNotNull(episodes.r2Key))
+      .orderBy(desc(episodes.publishedAt))
+      .limit(1)
+
+    if (!latestDownloaded) {
+      return { deletedCount: 0, anchorDate: null, cutoffDate: null }
+    }
+
+    const anchorDate = latestDownloaded.publishedAt
+    const cutoffDate = new Date(
+      anchorDate.getTime() - 14 * 24 * 60 * 60 * 1000,
+    )
+
+    const oldEpisodes = await db
+      .select({ id: episodes.id, r2Key: episodes.r2Key })
+      .from(episodes)
+      .where(
+        and(isNotNull(episodes.r2Key), lt(episodes.publishedAt, cutoffDate)),
+      )
+
+    let deletedCount = 0
+    for (const episode of oldEpisodes) {
+      if (!episode.r2Key) continue
+      try {
+        await (env as any).AUDIO_BUCKET.delete(episode.r2Key)
+      } catch {
+        // File may not exist; clear the reference anyway
+      }
+      await db
+        .update(episodes)
+        .set({ r2Key: null })
+        .where(eq(episodes.id, episode.id))
+      deletedCount++
+    }
+
+    return {
+      deletedCount,
+      anchorDate: anchorDate.toISOString(),
+      cutoffDate: cutoffDate.toISOString(),
+    }
+  },
+)
+
 export const resetEpisode = createServerFn({ method: 'POST' })
   .inputValidator((input: { episodeId: string }) => input)
   .handler(async ({ data }) => {
@@ -305,6 +383,7 @@ export const processEpisode = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }) => {
     assertNotDemo()
+    assertNotStasis()
     const instance = await (env as any).EPISODE_WORKFLOW.create({
       params: {
         episodeId: data.episodeId,

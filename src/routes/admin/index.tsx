@@ -3,6 +3,7 @@ import { useState } from 'react'
 import {
   getAdminData,
   getIsDemo,
+  getIsStasis,
   addPodcast,
   togglePodcast,
   removePodcast,
@@ -12,6 +13,7 @@ import {
   importPastEpisodes,
   generateWeeklyAnalysis,
   cancelAllJobs,
+  cleanupOldAudio,
 } from '~/lib/server-fns'
 
 const DEMO_MESSAGE =
@@ -23,23 +25,29 @@ function isDemoError(err: unknown): boolean {
 
 export const Route = createFileRoute('/admin/')({
   loader: async () => {
-    const [adminData, demoData] = await Promise.all([
+    const [adminData, demoData, stasisData] = await Promise.all([
       getAdminData(),
       getIsDemo(),
+      getIsStasis(),
     ])
-    return { ...adminData, isDemo: demoData.isDemo }
+    return {
+      ...adminData,
+      isDemo: demoData.isDemo,
+      isStasis: stasisData.isStasis,
+    }
   },
   component: AdminPage,
 })
 
 function AdminPage() {
-  const { podcasts, isDemo } = Route.useLoaderData()
+  const { podcasts, isDemo, isStasis } = Route.useLoaderData()
   const router = useRouter()
   const [feedUrl, setFeedUrl] = useState('')
   const [adding, setAdding] = useState(false)
   const [polling, setPolling] = useState(false)
   const [generatingAnalysis, setGeneratingAnalysis] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [cleaningAudio, setCleaningAudio] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [demoToast, setDemoToast] = useState(false)
@@ -193,6 +201,40 @@ function AdminPage() {
     }
   }
 
+  const handleCleanupAudio = async () => {
+    if (
+      !confirm(
+        'Delete audio files older than two weeks before the most recent download? Transcripts and analyses are kept.',
+      )
+    )
+      return
+    setCleaningAudio(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await cleanupOldAudio()
+      if (result.deletedCount === 0) {
+        setMessage('No audio files to clean up.')
+      } else {
+        const cutoff = result.cutoffDate
+          ? new Date(result.cutoffDate).toLocaleDateString()
+          : ''
+        setMessage(
+          `Deleted ${result.deletedCount} audio file(s) published before ${cutoff}.`,
+        )
+      }
+      router.invalidate()
+    } catch (err) {
+      if (isDemoError(err)) {
+        handleDemoError()
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to clean up audio')
+      }
+    } finally {
+      setCleaningAudio(false)
+    }
+  }
+
   const handleCancelAllJobs = async () => {
     if (!confirm('Cancel all running jobs and reset them to pending?')) return
     setCancelling(true)
@@ -234,6 +276,21 @@ function AdminPage() {
             Demo Mode
           </p>
           <p className="text-sm mt-1">{DEMO_MESSAGE}</p>
+        </div>
+      )}
+
+      {/* Stasis Mode Banner */}
+      {isStasis && (
+        <div className="mb-6 p-4 bg-warn-50 dark:bg-warn-900/50 border border-warn-200 dark:border-warn-700 text-warn-800 dark:text-warn-200 rounded-lg">
+          <p className="font-medium">
+            <span className="font-mono text-xs bg-warn-200 dark:bg-warn-700 rounded px-1.5 py-0.5 mr-2">STASIS</span>
+            Stasis Mode
+          </p>
+          <p className="text-sm mt-1">
+            Feed polling and episode processing are paused. Set
+            <code className="font-mono mx-1">IS_STASIS=false</code>
+            in <code className="font-mono">wrangler.jsonc</code> to resume.
+          </p>
         </div>
       )}
 
@@ -314,6 +371,13 @@ function AdminPage() {
               className="btn btn-secondary"
             >
               Force Refresh
+            </button>
+            <button
+              onClick={handleCleanupAudio}
+              disabled={cleaningAudio}
+              className="btn btn-danger"
+            >
+              {cleaningAudio ? 'Cleaning\u2026' : 'Clean Up Old Audio'}
             </button>
             <button
               onClick={handleCancelAllJobs}

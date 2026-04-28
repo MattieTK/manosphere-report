@@ -120,6 +120,11 @@ export async function parseFeed(feedUrl: string): Promise<FeedMeta> {
 }
 
 export async function pollAllFeeds(env: Env): Promise<void> {
+  if (String((env as any).IS_STASIS) === 'true') {
+    console.log('Skipping feed poll: stasis mode enabled')
+    return
+  }
+
   const db = getDb(env.DB)
 
   const activePodcasts = await db
