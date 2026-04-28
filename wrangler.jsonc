@@ -45,5 +45,6 @@
 	"vars": {
 		"IS_DEMO": "true",
 		"IS_STASIS": "true",
+		"RETENTION_PERIOD": "2w",
 	},
 }
